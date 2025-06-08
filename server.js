@@ -13,7 +13,7 @@ const SPORTS = [
   'basketball_nba',
   'icehockey_nhl',
   'soccer_epl',
-  'mma_mixed_martial_arts'  // Correct MMA key here
+  'mma_mixed_martial_arts'
 ];
 
 // Helper: filter events started within last 8 hours or same UTC day
@@ -33,8 +33,7 @@ function filterLiveOrRecentEvents(events) {
   });
 }
 
-// Scraper helpers (unchanged)...
-
+// Scraper for Sportsurge
 async function scrapeSportsurge() {
   try {
     const baseUrl = 'https://sportsurge.net/';
@@ -70,6 +69,7 @@ async function scrapeSportsurge() {
   }
 }
 
+// Scraper for Streamwoop
 async function scrapeStreamwoop() {
   try {
     const baseUrl = 'https://streamwoop.com/';
@@ -105,8 +105,123 @@ async function scrapeStreamwoop() {
   }
 }
 
+// Scraper for Stream2Watch
+async function scrapeStream2Watch() {
+  try {
+    const baseUrl = 'https://stream2watch.org/';
+    const html = await fetch(baseUrl).then(r => r.text());
+    const $ = cheerio.load(html);
+    const matchLinks = [];
+
+    $('a.srclink').each((_, el) => {
+      const title = $(el).attr('title') || $(el).text().trim();
+      const href = $(el).attr('href');
+      if (href && title) {
+        matchLinks.push({ title, url: href.startsWith('http') ? href : baseUrl.replace(/\/$/, '') + href });
+      }
+    });
+
+    const results = [];
+    for (const { title, url } of matchLinks) {
+      const html2 = await fetch(url).then(r => r.text()).catch(() => null);
+      if (!html2) continue;
+      const $2 = cheerio.load(html2);
+      $2('iframe').each((_, f) => {
+        const src = $2(f).attr('src');
+        if (src) {
+          const full = src.startsWith('http') ? src : `https:${src}`;
+          results.push({ title, embed: full });
+        }
+      });
+    }
+    return results;
+  } catch (e) {
+    console.warn('Stream2Watch scraper failed', e);
+    return [];
+  }
+}
+
+// Scraper for CricFree
+async function scrapeCricFree() {
+  try {
+    const baseUrl = 'https://cricfree.sc/';
+    const html = await fetch(baseUrl).then(r => r.text());
+    const $ = cheerio.load(html);
+    const matchLinks = [];
+
+    $('a[href*="/live-stream-"]').each((_, el) => {
+      const title = $(el).text().trim();
+      const href = $(el).attr('href');
+      if (href && title) {
+        matchLinks.push({ title, url: href.startsWith('http') ? href : baseUrl.replace(/\/$/, '') + href });
+      }
+    });
+
+    const results = [];
+    for (const { title, url } of matchLinks) {
+      const html2 = await fetch(url).then(r => r.text()).catch(() => null);
+      if (!html2) continue;
+      const $2 = cheerio.load(html2);
+      $2('iframe').each((_, f) => {
+        const src = $2(f).attr('src');
+        if (src) {
+          const full = src.startsWith('http') ? src : `https:${src}`;
+          results.push({ title, embed: full });
+        }
+      });
+    }
+    return results;
+  } catch (e) {
+    console.warn('CricFree scraper failed', e);
+    return [];
+  }
+}
+
+// Scraper for LiveSport24
+async function scrapeLiveSport24() {
+  try {
+    const baseUrl = 'https://livesport24.live/';
+    const html = await fetch(baseUrl).then(r => r.text());
+    const $ = cheerio.load(html);
+    const matchLinks = [];
+
+    $('div.sport-events-list a').each((_, el) => {
+      const title = $(el).text().trim();
+      const href = $(el).attr('href');
+      if (href && title) {
+        matchLinks.push({ title, url: href.startsWith('http') ? href : baseUrl.replace(/\/$/, '') + href });
+      }
+    });
+
+    const results = [];
+    for (const { title, url } of matchLinks) {
+      const html2 = await fetch(url).then(r => r.text()).catch(() => null);
+      if (!html2) continue;
+      const $2 = cheerio.load(html2);
+      $2('iframe').each((_, f) => {
+        const src = $2(f).attr('src');
+        if (src) {
+          const full = src.startsWith('http') ? src : `https:${src}`;
+          results.push({ title, embed: full });
+        }
+      });
+    }
+    return results;
+  } catch (e) {
+    console.warn('LiveSport24 scraper failed', e);
+    return [];
+  }
+}
+
 async function scrapeAllSources() {
-  const sources = [scrapeSportsurge, scrapeStreamwoop /* add more here */];
+  const sources = [
+    scrapeSportsurge,
+    scrapeStreamwoop,
+    scrapeStream2Watch,
+    scrapeCricFree,
+    scrapeLiveSport24,
+  ];
+
   const allStreams = [];
 
   for (const scraper of sources) {
@@ -158,7 +273,6 @@ async function fetchLiveGames() {
   return filterLiveOrRecentEvents(allEvents);
 }
 
-// API route unchanged except uses updated fetchLiveGames
 app.get('/api/live-games', async (req, res) => {
   try {
     const liveGames = await fetchLiveGames();
@@ -166,8 +280,8 @@ app.get('/api/live-games', async (req, res) => {
 
     const games = liveGames.map(ev => {
       const matchedStreams = streams
-        .filter(s => 
-          s.title.toLowerCase().includes(ev.home_team.toLowerCase()) || 
+        .filter(s =>
+          s.title.toLowerCase().includes(ev.home_team.toLowerCase()) ||
           s.title.toLowerCase().includes(ev.away_team.toLowerCase())
         )
         .map(s => ({
