@@ -13,23 +13,27 @@ const SPORTS = [
   'basketball_nba',
   'icehockey_nhl',
   'soccer_epl',
-  'mma_ufc'
+  'mma_mixed_martial_arts'  // Correct MMA key here
 ];
 
-// Helper to get today's UTC date range in ISO 8601 format
-function getTodayIsoRange() {
+// Helper: filter events started within last 8 hours or same UTC day
+function filterLiveOrRecentEvents(events) {
   const now = new Date();
+  const eightHoursAgo = new Date(now.getTime() - 8 * 60 * 60 * 1000);
 
-  // Start of today UTC (midnight)
-  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0)).toISOString();
+  return events.filter(event => {
+    const startTime = new Date(event.commence_time);
 
-  // End of today UTC (23:59:59)
-  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59)).toISOString();
+    const sameDay =
+      startTime.getUTCFullYear() === now.getUTCFullYear() &&
+      startTime.getUTCMonth() === now.getUTCMonth() &&
+      startTime.getUTCDate() === now.getUTCDate();
 
-  return { from, to };
+    return (startTime >= eightHoursAgo && startTime <= now) || sameDay;
+  });
 }
 
-// Scraper Helpers for various streaming sources
+// Scraper helpers (unchanged)...
 
 async function scrapeSportsurge() {
   try {
@@ -101,8 +105,6 @@ async function scrapeStreamwoop() {
   }
 }
 
-// Master scrape function tries all scrapers and aggregates unique streams
-
 async function scrapeAllSources() {
   const sources = [scrapeSportsurge, scrapeStreamwoop /* add more here */];
   const allStreams = [];
@@ -127,16 +129,13 @@ async function scrapeAllSources() {
   return unique;
 }
 
-// Fetch today's live game data from Odds API
-
+// Fetch all events without date filters, then filter locally
 async function fetchLiveGames() {
-  const { from, to } = getTodayIsoRange();
-
-  console.log(`Fetching events from ${from} to ${to}`);
+  console.log(`Fetching all events for sports: ${SPORTS.join(', ')}`);
 
   const results = await Promise.all(
     SPORTS.map(async sport => {
-      const url = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${ODDS_API_KEY}&dateFormat=iso&commenceTimeFrom=${from}&commenceTimeTo=${to}`;
+      const url = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${ODDS_API_KEY}&dateFormat=iso`;
       console.log('Fetching:', url);
       try {
         const res = await fetch(url);
@@ -153,11 +152,13 @@ async function fetchLiveGames() {
       }
     })
   );
-  return results.flat();
+
+  const allEvents = results.flat();
+  // Filter by your criteria here
+  return filterLiveOrRecentEvents(allEvents);
 }
 
-// Combine live games with streams and serve API
-
+// API route unchanged except uses updated fetchLiveGames
 app.get('/api/live-games', async (req, res) => {
   try {
     const liveGames = await fetchLiveGames();
