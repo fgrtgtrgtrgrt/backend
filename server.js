@@ -1,3 +1,4 @@
+// === backend.js ===
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
@@ -6,77 +7,78 @@ const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 4000;
-const API_KEY = '123'; // Your free API key
 
 const streamServers = [
-  'https://streamwish.net/embed/',
+  'https://streamwish.net/e/',
   'https://ok.ru/videoembed/',
-  'https://daddylivehd.com/embed/',
-  'https://vidsrc.me/embed/',
+  'https://daddylivehd.sx/embed/',
+  'https://vidsrc.to/embed/'
 ];
 
-const leagues = {
-  NBA: 4387,
-  NFL: 4391,
-  NHL: 4380,
-  Soccer: 4328,
-  UFC: 4444,
-};
+const leagues = [
+  { id: '4387', name: 'NFL' },
+  { id: '4380', name: 'NBA' },
+  { id: '4381', name: 'NHL' },
+  { id: '4391', name: 'UFC' },
+  { id: '4328', name: 'English Premier League' },
+];
 
-async function fetchLiveSports() {
-  let allEvents = [];
-  for (const [sport, leagueId] of Object.entries(leagues)) {
-    const url = `https://www.thesportsdb.com/api/v1/json/${API_KEY}/eventsnextleague.php?id=${leagueId}`;
-    try {
-      const res = await fetch(url);
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (data?.events) {
-        allEvents = allEvents.concat(
-          data.events.map(event => ({
-            id: event.idEvent,
-            homeTeam: event.strHomeTeam,
-            awayTeam: event.strAwayTeam,
-            league: event.strLeague,
-            startTime: event.strTimestamp || `${event.dateEvent} ${event.strTime}`,
-            status: event.strStatus || 'upcoming',
-            homeScore: event.intHomeScore || 0,
-            awayScore: event.intAwayScore || 0,
-            homeLogo: event.strHomeTeam ? `https://www.thesportsdb.com/images/media/team/badge/${event.strHomeTeam}.png` : '/placeholder.svg',
-            awayLogo: event.strAwayTeam ? `https://www.thesportsdb.com/images/media/team/badge/${event.strAwayTeam}.png` : '/placeholder.svg',
-            streams: streamServers
-              .sort(() => 0.5 - Math.random())
-              .slice(0, 3)
-              .map((baseUrl, idx) => ({
-                id: `${event.idEvent}_stream_${idx}`,
-                url: baseUrl + (10000 + Math.floor(Math.random() * 90000)), // fake demo video id
-                quality: idx === 0 ? 'HD' : 'SD',
-                server: baseUrl.match(/\/\/([^\/]+)\//)[1],
-                isWorking: true,
-              })),
-          }))
-        );
-      }
-    } catch (err) {
-      console.error(`Failed to fetch events for ${sport}`, err);
-    }
+const API_KEY = '123';
+
+async function fetchLeagueGames(id) {
+  const today = new Date().toISOString().slice(0, 10);
+  const url = `https://www.thesportsdb.com/api/v1/json/${API_KEY}/eventsday.php?d=${today}&id=${id}`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.events || [];
+}
+
+async function fetchAllGames() {
+  const allGames = [];
+  for (const league of leagues) {
+    const games = await fetchLeagueGames(league.id);
+    games.forEach((event, idx) => {
+      const id = event.idEvent;
+      const streams = streamServers.map((s, i) => ({
+        id: `${id}_${i}`,
+        url: s + (10000 + Math.floor(Math.random() * 90000)),
+        quality: i === 0 ? 'HD' : 'SD',
+        server: s.split('/')[2],
+        isWorking: true,
+      }));
+
+      allGames.push({
+        id,
+        homeTeam: event.strHomeTeam,
+        awayTeam: event.strAwayTeam,
+        league: event.strLeague,
+        startTime: event.strTimestamp || `${event.dateEvent} ${event.strTime}`,
+        status: event.strStatus || 'scheduled',
+        homeScore: 0,
+        awayScore: 0,
+        homeLogo: `/placeholder.svg`,
+        awayLogo: `/placeholder.svg`,
+        streams,
+      });
+    });
   }
-  return allEvents;
+  return allGames;
 }
 
 app.get('/api/live-games', async (req, res) => {
   try {
-    const games = await fetchLiveSports();
+    const games = await fetchAllGames();
     res.json(games);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Failed to fetch live games' });
+    res.status(500).json({ error: 'Failed to fetch games' });
   }
 });
 
 app.get('/api/game/:id', async (req, res) => {
   try {
-    const games = await fetchLiveSports();
+    const games = await fetchAllGames();
     const game = games.find(g => g.id === req.params.id);
     if (!game) return res.status(404).json({ error: 'Game not found' });
     res.json(game);
@@ -87,5 +89,34 @@ app.get('/api/game/:id', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Backend server running on port ${PORT}`);
+  console.log(`Backend running on port ${PORT}`);
 });
+
+// === streamservice.ts ===
+import type { Game } from '@/pages/Index';
+
+const BACKEND_URL = 'http://localhost:4000'; // Change to deployed URL when hosting
+
+export class StreamService {
+  static async getTodaysGames(): Promise<Game[]> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/live-games`);
+      if (!res.ok) throw new Error('Failed to fetch games');
+      return await res.json();
+    } catch (error) {
+      console.error('Error fetching games:', error);
+      return [];
+    }
+  }
+
+  static async getGameById(id: string): Promise<Game | null> {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/game/${id}`);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (error) {
+      console.error('Error fetching game by ID:', error);
+      return null;
+    }
+  }
+}
