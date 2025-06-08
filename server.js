@@ -6,6 +6,7 @@ const app = express();
 app.use(cors());
 
 const PORT = process.env.PORT || 4000;
+const API_KEY = '123'; // Your free API key
 
 const streamServers = [
   'https://streamwish.net/embed/',
@@ -14,71 +15,53 @@ const streamServers = [
   'https://vidsrc.me/embed/',
 ];
 
-// List of sports you want to fetch
-const sports = ['NBA', 'NFL', 'NHL', 'Soccer', 'UFC']; // You can expand or adjust
+const leagues = {
+  NBA: 4387,
+  NFL: 4391,
+  NHL: 4380,
+  Soccer: 4328,
+  UFC: 4444,
+};
 
 async function fetchLiveSports() {
-  const today = new Date().toISOString().slice(0, 10);
   let allEvents = [];
-
-  for (const sport of sports) {
-    const url = `https://www.thesportsdb.com/api/v1/json/1/eventsday.php?d=${today}&s=${sport}`;
-    console.log(`Fetching ${sport} events from: ${url}`);
-
+  for (const [sport, leagueId] of Object.entries(leagues)) {
+    const url = `https://www.thesportsdb.com/api/v1/json/${API_KEY}/eventsnextleague.php?id=${leagueId}`;
     try {
       const res = await fetch(url);
-      if (!res.ok) {
-        console.error(`Failed to fetch ${sport} data, status: ${res.status}`);
-        continue;
-      }
+      if (!res.ok) continue;
       const data = await res.json();
       if (data?.events) {
-        allEvents = allEvents.concat(data.events);
-      } else {
-        console.log(`No events for ${sport} today.`);
+        allEvents = allEvents.concat(
+          data.events.map(event => ({
+            id: event.idEvent,
+            homeTeam: event.strHomeTeam,
+            awayTeam: event.strAwayTeam,
+            league: event.strLeague,
+            startTime: event.strTimestamp || `${event.dateEvent} ${event.strTime}`,
+            status: event.strStatus || 'upcoming',
+            homeScore: event.intHomeScore || 0,
+            awayScore: event.intAwayScore || 0,
+            homeLogo: event.strHomeTeam ? `https://www.thesportsdb.com/images/media/team/badge/${event.strHomeTeam}.png` : '/placeholder.svg',
+            awayLogo: event.strAwayTeam ? `https://www.thesportsdb.com/images/media/team/badge/${event.strAwayTeam}.png` : '/placeholder.svg',
+            streams: streamServers
+              .sort(() => 0.5 - Math.random())
+              .slice(0, 3)
+              .map((baseUrl, idx) => ({
+                id: `${event.idEvent}_stream_${idx}`,
+                url: baseUrl + (10000 + Math.floor(Math.random() * 90000)), // fake demo video id
+                quality: idx === 0 ? 'HD' : 'SD',
+                server: baseUrl.match(/\/\/([^\/]+)\//)[1],
+                isWorking: true,
+              })),
+          }))
+        );
       }
-    } catch (error) {
-      console.error(`Error fetching ${sport}:`, error);
+    } catch (err) {
+      console.error(`Failed to fetch events for ${sport}`, err);
     }
   }
-
-  // Map all events into your standard structure
-  return allEvents.map((event) => {
-    const id = event.idEvent;
-    const homeTeam = event.strHomeTeam || event.strEvent || 'Unknown Home';
-    const awayTeam = event.strAwayTeam || '';
-    const league = event.strLeague || 'Unknown League';
-    const startTime = event.strTimestamp || `${event.dateEvent || ''} ${event.strTime || ''}`.trim();
-    const status = event.strStatus || 'live';
-    const homeLogo = event.strHomeTeamBadge || `https://www.thesportsdb.com/images/media/team/badge/${homeTeam}.png` || '/placeholder.svg';
-    const awayLogo = event.strAwayTeamBadge || `https://www.thesportsdb.com/images/media/team/badge/${awayTeam}.png` || '/placeholder.svg';
-
-    // Assign 1-3 random streams for demo
-    const streams = streamServers
-      .sort(() => 0.5 - Math.random())
-      .slice(0, 3)
-      .map((baseUrl, idx) => ({
-        id: `${id}_stream_${idx}`,
-        url: baseUrl + (10000 + Math.floor(Math.random() * 90000)), // fake video id to demo
-        quality: idx === 0 ? 'HD' : 'SD',
-        server: baseUrl.match(/\/\/([^\/]+)\//)[1],
-        isWorking: true,
-      }));
-
-    return {
-      id,
-      homeTeam,
-      awayTeam,
-      league,
-      startTime,
-      status,
-      homeScore: 0,
-      awayScore: 0,
-      homeLogo,
-      awayLogo,
-      streams,
-    };
-  });
+  return allEvents;
 }
 
 app.get('/api/live-games', async (req, res) => {
