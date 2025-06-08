@@ -1,93 +1,172 @@
-// === backend.js ===
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
+const cheerio = require('cheerio');
 
 const app = express();
 app.use(cors());
-
 const PORT = process.env.PORT || 4000;
 
-const streamServers = [
-  'https://streamwish.net/e/',
-  'https://ok.ru/videoembed/',
-  'https://daddylivehd.sx/embed/',
-  'https://vidsrc.to/embed/'
+const ODDS_API_KEY = '4249dc40738171eb70c1b3caf61f538b';
+const SPORTS = [
+  'americanfootball_nfl',
+  'basketball_nba',
+  'icehockey_nhl',
+  'soccer_epl',
+  'mma_ufc'
 ];
 
-const leagues = [
-  { id: '4387', name: 'NFL' },
-  { id: '4380', name: 'NBA' },
-  { id: '4381', name: 'NHL' },
-  { id: '4391', name: 'UFC' },
-  { id: '4328', name: 'English Premier League' },
-];
+// Scraper Helpers for various streaming sources
 
-const API_KEY = '123';
+async function scrapeSportsurge() {
+  try {
+    const baseUrl = 'https://sportsurge.net/';
+    const html = await fetch(baseUrl).then(r => r.text());
+    const $ = cheerio.load(html);
+    const matchLinks = [];
 
-async function fetchLeagueGames(id) {
-  const today = new Date().toISOString().slice(0, 10);
-  const url = `https://www.thesportsdb.com/api/v1/json/${API_KEY}/eventsday.php?d=${today}&id=${id}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const data = await res.json();
-  return data.events || [];
-}
-
-async function fetchAllGames() {
-  const allGames = [];
-  for (const league of leagues) {
-    const games = await fetchLeagueGames(league.id);
-    games.forEach((event, idx) => {
-      const id = event.idEvent;
-      const streams = streamServers.map((s, i) => ({
-        id: `${id}_${i}`,
-        url: s + (10000 + Math.floor(Math.random() * 90000)),
-        quality: i === 0 ? 'HD' : 'SD',
-        server: s.split('/')[2],
-        isWorking: true,
-      }));
-
-      allGames.push({
-        id,
-        homeTeam: event.strHomeTeam,
-        awayTeam: event.strAwayTeam,
-        league: event.strLeague,
-        startTime: event.strTimestamp || `${event.dateEvent} ${event.strTime}`,
-        status: event.strStatus || 'scheduled',
-        homeScore: 0,
-        awayScore: 0,
-        homeLogo: `/placeholder.svg`,
-        awayLogo: `/placeholder.svg`,
-        streams,
-      });
+    $('.sports-table a').each((_, el) => {
+      const title = $(el).text().trim();
+      const href = $(el).attr('href');
+      if (href && title) {
+        matchLinks.push({ title, url: href.startsWith('http') ? href : baseUrl.replace(/\/$/, '') + href });
+      }
     });
+
+    const results = [];
+    for (const { title, url } of matchLinks) {
+      const html2 = await fetch(url).then(r => r.text()).catch(() => null);
+      if (!html2) continue;
+      const $2 = cheerio.load(html2);
+      $2('iframe').each((_, f) => {
+        const src = $2(f).attr('src');
+        if (src) {
+          const full = src.startsWith('http') ? src : `https:${src}`;
+          results.push({ title, embed: full });
+        }
+      });
+    }
+    return results;
+  } catch (e) {
+    console.warn('Sportsurge scraper failed', e);
+    return [];
   }
-  return allGames;
 }
+
+// Add other scrapers below, same signature: return [{title, embed}]
+// Example: scrapeStreamwoop
+
+async function scrapeStreamwoop() {
+  try {
+    const baseUrl = 'https://streamwoop.com/';
+    const html = await fetch(baseUrl).then(r => r.text());
+    const $ = cheerio.load(html);
+    const matchLinks = [];
+
+    $('.event__match').each((_, el) => {
+      const title = $(el).find('.event__title').text().trim();
+      const href = $(el).find('a').attr('href');
+      if (href && title) {
+        matchLinks.push({ title, url: href.startsWith('http') ? href : baseUrl.replace(/\/$/, '') + href });
+      }
+    });
+
+    const results = [];
+    for (const { title, url } of matchLinks) {
+      const html2 = await fetch(url).then(r => r.text()).catch(() => null);
+      if (!html2) continue;
+      const $2 = cheerio.load(html2);
+      $2('iframe').each((_, f) => {
+        const src = $2(f).attr('src');
+        if (src) {
+          const full = src.startsWith('http') ? src : `https:${src}`;
+          results.push({ title, embed: full });
+        }
+      });
+    }
+    return results;
+  } catch (e) {
+    console.warn('Streamwoop scraper failed', e);
+    return [];
+  }
+}
+
+// Master scrape function tries all scrapers and aggregates unique streams
+
+async function scrapeAllSources() {
+  const sources = [scrapeSportsurge, scrapeStreamwoop /* add more here */];
+  const allStreams = [];
+
+  for (const scraper of sources) {
+    const res = await scraper();
+    if (res.length > 0) {
+      allStreams.push(...res);
+    }
+  }
+
+  // Remove duplicates by embed URL
+  const unique = [];
+  const seen = new Set();
+  for (const s of allStreams) {
+    if (!seen.has(s.embed)) {
+      unique.push(s);
+      seen.add(s.embed);
+    }
+  }
+
+  return unique;
+}
+
+// Fetch live game data from Odds API
+
+async function fetchLiveGames() {
+  const results = await Promise.all(
+    SPORTS.map(sport =>
+      fetch(`https://api.the-odds-api.com/v4/sports/${sport}/scores?apiKey=${ODDS_API_KEY}&daysFrom=0&dateFormat=iso`)
+        .then(r => r.ok ? r.json() : [])
+        .catch(() => [])
+    )
+  );
+  return results.flat();
+}
+
+// Combine live games with streams
 
 app.get('/api/live-games', async (req, res) => {
   try {
-    const games = await fetchAllGames();
+    const liveGames = await fetchLiveGames();
+    const streams = await scrapeAllSources();
+
+    const games = liveGames.map(ev => {
+      const matchedStreams = streams
+        .filter(s => 
+          s.title.toLowerCase().includes(ev.home_team.toLowerCase()) || 
+          s.title.toLowerCase().includes(ev.away_team.toLowerCase())
+        )
+        .map(s => ({
+          url: s.embed,
+          server: new URL(s.embed).hostname,
+          isWorking: true
+        }));
+
+      return {
+        id: ev.id,
+        homeTeam: ev.home_team,
+        awayTeam: ev.away_team,
+        league: ev.sport_key,
+        startTime: ev.commence_time,
+        status: ev.completed ? 'finished' : (new Date(ev.commence_time) <= new Date() ? 'live' : 'upcoming'),
+        homeScore: ev.scores?.find(s => s.name === ev.home_team)?.score ?? null,
+        awayScore: ev.scores?.find(s => s.name === ev.away_team)?.score ?? null,
+        streams: matchedStreams,
+      };
+    });
+
     res.json(games);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch games' });
+  } catch (e) {
+    console.error('API error', e);
+    res.status(500).json({ error: 'Failed to fetch live games with streams' });
   }
 });
 
-app.get('/api/game/:id', async (req, res) => {
-  try {
-    const games = await fetchAllGames();
-    const game = games.find(g => g.id === req.params.id);
-    if (!game) return res.status(404).json({ error: 'Game not found' });
-    res.json(game);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch game' });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`Backend running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
