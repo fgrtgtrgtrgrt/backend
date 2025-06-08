@@ -7,7 +7,6 @@ app.use(cors());
 
 const PORT = process.env.PORT || 4000;
 
-// Utility: mock stream sources to embed for each game
 const streamServers = [
   'https://streamwish.net/embed/',
   'https://ok.ru/videoembed/',
@@ -15,31 +14,44 @@ const streamServers = [
   'https://vidsrc.me/embed/',
 ];
 
-// Example: You could replace this with a real public sports API key & endpoint.
-// For demo, we fetch NBA live games from TheSportsDB free API
-// Docs: https://www.thesportsdb.com/api.php
+// List of sports you want to fetch
+const sports = ['NBA', 'NFL', 'NHL', 'Soccer', 'UFC']; // You can expand or adjust
 
 async function fetchLiveSports() {
-  // Example: fetch NBA events live today (replace or expand for soccer, NHL, UFC, etc)
   const today = new Date().toISOString().slice(0, 10);
-  const url = `https://www.thesportsdb.com/api/v1/json/1/eventsday.php?d=${today}&s=NBA`;
-  
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Failed to fetch sports data');
-  const data = await res.json();
+  let allEvents = [];
 
-  // Format into our app's game structure
-  const events = data?.events || [];
+  for (const sport of sports) {
+    const url = `https://www.thesportsdb.com/api/v1/json/1/eventsday.php?d=${today}&s=${sport}`;
+    console.log(`Fetching ${sport} events from: ${url}`);
 
-  return events.map((event, i) => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        console.error(`Failed to fetch ${sport} data, status: ${res.status}`);
+        continue;
+      }
+      const data = await res.json();
+      if (data?.events) {
+        allEvents = allEvents.concat(data.events);
+      } else {
+        console.log(`No events for ${sport} today.`);
+      }
+    } catch (error) {
+      console.error(`Error fetching ${sport}:`, error);
+    }
+  }
+
+  // Map all events into your standard structure
+  return allEvents.map((event) => {
     const id = event.idEvent;
-    const homeTeam = event.strHomeTeam;
-    const awayTeam = event.strAwayTeam;
-    const league = event.strLeague;
-    const startTime = event.strTimestamp || event.dateEvent + ' ' + event.strTime;
-    const status = event.strStatus || 'live'; // Simplified
-    const homeLogo = `https://www.thesportsdb.com/images/media/team/badge/${event.strHomeTeam}.png` || '/placeholder.svg';
-    const awayLogo = `https://www.thesportsdb.com/images/media/team/badge/${event.strAwayTeam}.png` || '/placeholder.svg';
+    const homeTeam = event.strHomeTeam || event.strEvent || 'Unknown Home';
+    const awayTeam = event.strAwayTeam || '';
+    const league = event.strLeague || 'Unknown League';
+    const startTime = event.strTimestamp || `${event.dateEvent || ''} ${event.strTime || ''}`.trim();
+    const status = event.strStatus || 'live';
+    const homeLogo = event.strHomeTeamBadge || `https://www.thesportsdb.com/images/media/team/badge/${homeTeam}.png` || '/placeholder.svg';
+    const awayLogo = event.strAwayTeamBadge || `https://www.thesportsdb.com/images/media/team/badge/${awayTeam}.png` || '/placeholder.svg';
 
     // Assign 1-3 random streams for demo
     const streams = streamServers
