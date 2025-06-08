@@ -1,19 +1,17 @@
 {
-  "name": "sports-backend",
+  "name": "sports-stream-backend",
   "version": "1.0.0",
-  "description": "Backend server for sports streaming app",
-  "main": "server.js",
+  "description": "Backend for scraping sports streams and fetching live games",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node index.js"
   },
+  "author": "",
+  "license": "MIT",
   "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
     "cors": "^2.8.5",
     "express": "^4.18.2",
     "node-fetch": "^2.6.7"
-  },
-  "engines": {
-    "node": ">=14"
-  },
-  "author": "",
-  "license": "MIT"
+  }
 }
