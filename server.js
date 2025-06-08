@@ -113,10 +113,24 @@ async function scrapeAllSources() {
 }
 
 // Fetch live games using Odds API /events endpoint
+function getTodayIsoRange() {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(now.getUTCDate()).padStart(2, '0');
+
+  const from = `${year}-${month}-${day}T00:00:00Z`;
+  const to = `${year}-${month}-${day}T23:59:59Z`;
+
+  return { from, to };
+}
+
 async function fetchLiveGames() {
+  const { from, to } = getTodayIsoRange();
+
   const results = await Promise.all(
     SPORTS.map(sport => {
-      const url = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${ODDS_API_KEY}&dateFormat=iso`;
+      const url = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${ODDS_API_KEY}&dateFormat=iso&commenceTimeFrom=${from}&commenceTimeTo=${to}`;
       return fetch(url)
         .then(res => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -127,6 +141,7 @@ async function fetchLiveGames() {
   );
   return results.flat();
 }
+
 
 // API route: Combine live games with scraped streams
 app.get('/api/live-games', async (req, res) => {
