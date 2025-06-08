@@ -16,8 +16,7 @@ const SPORTS = [
   'mma_ufc'
 ];
 
-// Scraper Helpers for various streaming sources
-
+// Scraper for Sportsurge
 async function scrapeSportsurge() {
   try {
     const baseUrl = 'https://sportsurge.net/';
@@ -53,9 +52,7 @@ async function scrapeSportsurge() {
   }
 }
 
-// Add other scrapers below, same signature: return [{title, embed}]
-// Example: scrapeStreamwoop
-
+// Scraper for Streamwoop
 async function scrapeStreamwoop() {
   try {
     const baseUrl = 'https://streamwoop.com/';
@@ -91,10 +88,9 @@ async function scrapeStreamwoop() {
   }
 }
 
-// Master scrape function tries all scrapers and aggregates unique streams
-
+// Aggregate all scrapers and remove duplicate embeds
 async function scrapeAllSources() {
-  const sources = [scrapeSportsurge, scrapeStreamwoop /* add more here */];
+  const sources = [scrapeSportsurge, scrapeStreamwoop /* add more here if needed */];
   const allStreams = [];
 
   for (const scraper of sources) {
@@ -104,7 +100,6 @@ async function scrapeAllSources() {
     }
   }
 
-  // Remove duplicates by embed URL
   const unique = [];
   const seen = new Set();
   for (const s of allStreams) {
@@ -117,21 +112,23 @@ async function scrapeAllSources() {
   return unique;
 }
 
-// Fetch live game data from Odds API
-
+// Fetch live games using Odds API /events endpoint
 async function fetchLiveGames() {
   const results = await Promise.all(
-    SPORTS.map(sport =>
-      fetch(`https://api.the-odds-api.com/v4/sports/${sport}/scores?apiKey=${ODDS_API_KEY}&daysFrom=0&dateFormat=iso`)
-        .then(r => r.ok ? r.json() : [])
-        .catch(() => [])
-    )
+    SPORTS.map(sport => {
+      const url = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${ODDS_API_KEY}&dateFormat=iso`;
+      return fetch(url)
+        .then(res => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
+        .catch(() => []);
+    })
   );
   return results.flat();
 }
 
-// Combine live games with streams
-
+// API route: Combine live games with scraped streams
 app.get('/api/live-games', async (req, res) => {
   try {
     const liveGames = await fetchLiveGames();
@@ -139,8 +136,8 @@ app.get('/api/live-games', async (req, res) => {
 
     const games = liveGames.map(ev => {
       const matchedStreams = streams
-        .filter(s => 
-          s.title.toLowerCase().includes(ev.home_team.toLowerCase()) || 
+        .filter(s =>
+          s.title.toLowerCase().includes(ev.home_team.toLowerCase()) ||
           s.title.toLowerCase().includes(ev.away_team.toLowerCase())
         )
         .map(s => ({
