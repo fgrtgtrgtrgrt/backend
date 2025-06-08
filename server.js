@@ -16,7 +16,21 @@ const SPORTS = [
   'mma_ufc'
 ];
 
-// Scraper for Sportsurge
+// Helper to get today's UTC date range in ISO 8601 format
+function getTodayIsoRange() {
+  const now = new Date();
+
+  // Start of today UTC (midnight)
+  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0)).toISOString();
+
+  // End of today UTC (23:59:59)
+  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59)).toISOString();
+
+  return { from, to };
+}
+
+// Scraper Helpers for various streaming sources
+
 async function scrapeSportsurge() {
   try {
     const baseUrl = 'https://sportsurge.net/';
@@ -52,7 +66,6 @@ async function scrapeSportsurge() {
   }
 }
 
-// Scraper for Streamwoop
 async function scrapeStreamwoop() {
   try {
     const baseUrl = 'https://streamwoop.com/';
@@ -88,9 +101,10 @@ async function scrapeStreamwoop() {
   }
 }
 
-// Aggregate all scrapers and remove duplicate embeds
+// Master scrape function tries all scrapers and aggregates unique streams
+
 async function scrapeAllSources() {
-  const sources = [scrapeSportsurge, scrapeStreamwoop /* add more here if needed */];
+  const sources = [scrapeSportsurge, scrapeStreamwoop /* add more here */];
   const allStreams = [];
 
   for (const scraper of sources) {
@@ -100,6 +114,7 @@ async function scrapeAllSources() {
     }
   }
 
+  // Remove duplicates by embed URL
   const unique = [];
   const seen = new Set();
   for (const s of allStreams) {
@@ -112,38 +127,37 @@ async function scrapeAllSources() {
   return unique;
 }
 
-// Fetch live games using Odds API /events endpoint
-function getTodayIsoRange() {
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(now.getUTCDate()).padStart(2, '0');
-
-  const from = `${year}-${month}-${day}T00:00:00Z`;
-  const to = `${year}-${month}-${day}T23:59:59Z`;
-
-  return { from, to };
-}
+// Fetch today's live game data from Odds API
 
 async function fetchLiveGames() {
   const { from, to } = getTodayIsoRange();
 
+  console.log(`Fetching events from ${from} to ${to}`);
+
   const results = await Promise.all(
-    SPORTS.map(sport => {
+    SPORTS.map(async sport => {
       const url = `https://api.the-odds-api.com/v4/sports/${sport}/events?apiKey=${ODDS_API_KEY}&dateFormat=iso&commenceTimeFrom=${from}&commenceTimeTo=${to}`;
-      return fetch(url)
-        .then(res => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return res.json();
-        })
-        .catch(() => []);
+      console.log('Fetching:', url);
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          console.warn(`Failed to fetch ${sport} events. Status: ${res.status}`);
+          return [];
+        }
+        const data = await res.json();
+        console.log(`Got ${data.length} events for ${sport}`);
+        return data;
+      } catch (e) {
+        console.warn(`Error fetching ${sport} events:`, e);
+        return [];
+      }
     })
   );
   return results.flat();
 }
 
+// Combine live games with streams and serve API
 
-// API route: Combine live games with scraped streams
 app.get('/api/live-games', async (req, res) => {
   try {
     const liveGames = await fetchLiveGames();
@@ -151,8 +165,8 @@ app.get('/api/live-games', async (req, res) => {
 
     const games = liveGames.map(ev => {
       const matchedStreams = streams
-        .filter(s =>
-          s.title.toLowerCase().includes(ev.home_team.toLowerCase()) ||
+        .filter(s => 
+          s.title.toLowerCase().includes(ev.home_team.toLowerCase()) || 
           s.title.toLowerCase().includes(ev.away_team.toLowerCase())
         )
         .map(s => ({
